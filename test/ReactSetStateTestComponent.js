@@ -10,77 +10,97 @@ function getNonUpdatingSetStateLifeCycleCalls() {
 
 var _nonUpdatingSetStateLifeCycleCalls = [];
 
-var ReactSetStateTestComponent = React.createClass({
-  getDefaultProps: function() {
-    return {shouldUpdate: true};
-  },
+function getLatestJSCounter() {
+  return _counter;
+}
 
-  getInitialState: function() {
-    return {counter: 0};
-  },
+function getUpdatingRenderedCounter() {
+  return ReactDOM.findDOMNode(updatingInstance).textContent;
+}
 
-  recordLifecyleCall: function(name) {
-    this.props.shouldUpdate ? _updatingSetStateLifeCycleCalls.push(name) : _nonUpdatingSetStateLifeCycleCalls.push(name)
-  },
+function getNonUpdatingRenderedCounter() {
+  return ReactDOM.findDOMNode(nonUpdatingInstance).textContent;
+}
 
-  componentWillReceiveProps: function(_) {
-    this.recordLifecyleCall("componentWillReceiveProps");
-  },
+var _counter;
 
-  shouldComponentUpdate: function(_, __) {
-    this.recordLifecyleCall("shouldComponentUpdate");
+class ReactSetStateTestComponent extends React.Component {
+  constructor(props) {
+    super(props);
+    _counter = 1;
+    this.state = {counter: _counter};
+  }
+
+  recordStateChange(newCount) {
+    _counter = newCount;
+  }
+
+  recordLifecycleCall(name) {
+    this.props.shouldUpdate ? _updatingSetStateLifeCycleCalls.push(name) : _nonUpdatingSetStateLifeCycleCalls.push(name);
+    this.recordStateChange(this.state.counter);
+  }
+
+  UNSAFE_componentWillReceiveProps(_) {
+    this.recordLifecycleCall("componentWillReceiveProps");
+  }
+
+  shouldComponentUpdate(_, __) {
+    this.recordLifecycleCall("shouldComponentUpdate");
     return this.props.shouldUpdate;
-  },
+  }
 
-  componentWillUpdate: function(_, __) {
-    this.recordLifecyleCall("componentWillUpdate");
-  },
+  UNSAFE_componentWillUpdate(_, __) {
+    this.recordLifecycleCall("componentWillUpdate");
+  }
 
-  componentDidUpdate: function(_, __) {
-    this.recordLifecyleCall("componentDidUpdate");
-  },
+  componentDidUpdate(_, __) {
+    this.recordLifecycleCall("componentDidUpdate");
+  }
 
-  outerSetStateCallback: function() {
-    this.recordLifecyleCall('outerSetStateCallback');
-  },
+  outerSetStateCallback() {
+    this.recordLifecycleCall('outerSetStateCallback');
+  }
 
-  innerSetStateCallback: function() {
-    this.recordLifecyleCall('innerSetStateCallback');
-  },
+  innerSetStateCallback() {
+    this.recordLifecycleCall('innerSetStateCallback');
+  }
 
-  outerTransactionalSetStateCallback: function(previousState, props) {
-    this.recordLifecyleCall('outerTransactionalSetStateCallback');
+  outerTransactionalSetStateCallback(previousState, props) {
+    this.recordLifecycleCall('outerTransactionalSetStateCallback');
     return {counter: previousState.counter + 1};
-  },
+  }
 
-  innerTransactionalSetStateCallback: function(previousState, props) {
-    this.recordLifecyleCall('innerTransactionalSetStateCallback');
+  innerTransactionalSetStateCallback(previousState, props) {
+    this.recordLifecycleCall('innerTransactionalSetStateCallback');
     return {counter: previousState.counter + 1};
-  },
+  }
 
-  handleOuterClick: function(_) {
-    this.setState(this.outerTransactionalSetStateCallback, this.outerSetStateCallback);
-  },
+  handleOuterClick(_) {
+    this.setState(this.outerTransactionalSetStateCallback.bind(this), this.outerSetStateCallback.bind(this));
+  }
 
-  handleInnerClick: function(_) {
-    this.setState(this.innerTransactionalSetStateCallback, this.innerSetStateCallback);
-  },
+  handleInnerClick(_) {
+    this.setState(this.innerTransactionalSetStateCallback.bind(this), this.innerSetStateCallback.bind(this));
+  }
 
-  render: function() {
-    return React.createElement("div", {onClick: this.handleOuterClick},
-      React.createElement("div", {onClick: this.handleInnerClick}, this.state.counter)
+  render() {
+    this.recordLifecycleCall('render');
+    return React.createElement("div", {onClick: this.handleOuterClick.bind(this)},
+        React.createElement("div", {onClick: this.handleInnerClick.bind(this)}, this.state.counter)
     );
   }
-});
+}
+
+ReactSetStateTestComponent.defaultProps = { shouldUpdate: true };
 
 var updatingInstance = ReactDOM.render(
-  React.createElement(ReactSetStateTestComponent),
-  document.createElement("div")
+    React.createElement(ReactSetStateTestComponent),
+    document.createElement("div")
 );
 
 var nonUpdatingInstance = ReactDOM.render(
-  React.createElement(ReactSetStateTestComponent, {shouldUpdate: false}),
-  document.createElement("div")
+    React.createElement(ReactSetStateTestComponent, {shouldUpdate: false}),
+    document.createElement("div")
 );
 
 React.addons.TestUtils.Simulate.click(ReactDOM.findDOMNode(updatingInstance).children[0]);

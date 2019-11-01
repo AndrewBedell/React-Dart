@@ -1,14 +1,16 @@
 import 'dart:async';
 import 'dart:html';
 import 'dart:js';
-
 import 'dart:js_util';
+
+import 'package:meta/meta.dart';
 import 'package:test/test.dart';
 
 import 'package:react/react_client.dart';
 import 'package:react/react_dom.dart' as react_dom;
 import 'package:react/react_test_utils.dart' as rtu;
 import 'package:react/react.dart' as react;
+import 'package:react/react_client/react_interop.dart';
 
 import '../util.dart';
 
@@ -21,23 +23,18 @@ void commonFactoryTests(ReactComponentFactoryProxy factory) {
     expect(instance.type, equals(factory.type));
   });
 
-  group('passes children to the component when specified as', () {
-    //  __NOTE:__ Ignore comment added to work around a Dart 1 Analysis bug.
-    //  Remove in Dart 2.
-    // ignore: argument_type_not_assignable
-    dynamic getJsChildren(ReactElement instance) => getProperty(instance.props, 'children');
-
+  void sharedChildrenTests(dynamic getChildren(ReactElement instance), {@required bool shouldAlwaysBeList}) {
     // There are different code paths for 0, 1, 2, 3, 4, 5, 6, and 6+ arguments.
     // Test all of them.
     group('a number of variadic children:', () {
       test('0', () {
         final instance = factory({});
-        expect(getJsChildren(instance), isNull);
+        expect(getChildren(instance), shouldAlwaysBeList ? [] : isNull);
       });
 
       test('1', () {
         final instance = factory({}, 1);
-        expect(getJsChildren(instance), equals(1));
+        expect(getChildren(instance), shouldAlwaysBeList ? [1] : 1);
       });
 
       const firstGeneralCaseVariadicChildCount = 2;
@@ -49,7 +46,7 @@ void commonFactoryTests(ReactComponentFactoryProxy factory) {
           final expectedChildren = new List.generate(childrenCount, (i) => i + 1);
           final arguments = <dynamic>[{}]..add(expectedChildren);
           final instance = Function.apply(factory, arguments);
-          expect(getJsChildren(instance), expectedChildren);
+          expect(getChildren(instance), expectedChildren);
         });
       }
 
@@ -58,7 +55,7 @@ void commonFactoryTests(ReactComponentFactoryProxy factory) {
             24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40);
         // Generate these instead of hard coding them to ensure the arguments passed into this test match maxSupportedVariadicChildCount
         final expectedChildren = new List.generate(maxSupportedVariadicChildCount, (i) => i + 1);
-        expect(getJsChildren(instance), equals(expectedChildren));
+        expect(getChildren(instance), equals(expectedChildren));
       });
     });
 
@@ -67,24 +64,46 @@ void commonFactoryTests(ReactComponentFactoryProxy factory) {
         'one',
         'two',
       ]);
-      expect(getJsChildren(instance), equals(['one', 'two']));
+      expect(getChildren(instance), equals(['one', 'two']));
     });
 
     test('an empty List', () {
       var instance = factory({}, []);
-      expect(getJsChildren(instance), equals([]));
+      expect(getChildren(instance), equals([]));
     });
 
     test('an Iterable', () {
       var instance = factory({}, new Iterable.generate(3, (int i) => '$i'));
-      expect(getJsChildren(instance), equals(['0', '1', '2']));
+      expect(getChildren(instance), equals(['0', '1', '2']));
     });
 
     test('an empty Iterable', () {
       var instance = factory({}, new Iterable.empty());
-      expect(getJsChildren(instance), equals([]));
+      expect(getChildren(instance), equals([]));
     });
+  }
+
+  group('passes children to the JS component when specified as', () {
+    dynamic getJsChildren(ReactElement instance) => getProperty(instance.props, 'children');
+
+    sharedChildrenTests(getJsChildren,
+        // Only Component2 should always get lists.
+        // Component, DOM components, etc. should not for compatibility purposes.
+        shouldAlwaysBeList: isDartComponent2(factory({})));
   });
+
+  if (isDartComponent(factory({}))) {
+    group('passes children to the Dart component when specified as', () {
+      dynamic getDartChildren(ReactElement instance) {
+        // Actually render the component to provide full end-to-end coverage
+        // from ReactElement to `this.props`.
+        ReactComponent renderedInstance = rtu.renderIntoDocument(instance);
+        return renderedInstance.dartComponent.props['children'];
+      }
+
+      sharedChildrenTests(getDartChildren, shouldAlwaysBeList: true);
+    });
+  }
 }
 
 void domEventHandlerWrappingTests(ReactComponentFactoryProxy factory) {
@@ -174,6 +193,29 @@ void domEventHandlerWrappingTests(ReactComponentFactoryProxy factory) {
   });
 }
 
+void refTests(ReactComponentFactoryProxy factory, {void verifyRefValue(dynamic refValue)}) {
+  test('callback refs are called with the correct value', () {
+    var called = false;
+    var refValue;
+
+    rtu.renderIntoDocument(factory({
+      'ref': (ref) {
+        called = true;
+        refValue = ref;
+      }
+    }));
+
+    expect(called, isTrue, reason: 'should have called the callback ref');
+    verifyRefValue(refValue);
+  });
+
+  test('string refs are created with the correct value', () {
+    ReactComponent renderedInstance = _renderWithOwner(() => factory({'ref': 'test'}));
+
+    verifyRefValue(renderedInstance.dartComponent.ref('test'));
+  });
+}
+
 void _childKeyWarningTests(Function factory) {
   group('key/children validation', () {
     bool consoleErrorCalled;
@@ -185,7 +227,7 @@ void _childKeyWarningTests(Function factory) {
       consoleErrorMessage = null;
 
       originalConsoleError = context['console']['error'];
-      context['console']['error'] = new JsFunction.withThis((self, message) {
+      context['console']['error'] = new JsFunction.withThis((self, message, arg1, arg2, arg3) {
         consoleErrorCalled = true;
         consoleErrorMessage = message;
 
@@ -201,14 +243,13 @@ void _childKeyWarningTests(Function factory) {
       _renderWithUniqueOwnerName(() => factory({}, [react.span({})]));
 
       expect(consoleErrorCalled, isTrue, reason: 'should have outputted a warning');
-      expect(consoleErrorMessage, contains('Each child in an array or iterator should have a unique "key" prop.'));
+      expect(consoleErrorMessage, contains('Each child in a list should have a unique "key" prop.'));
     });
 
     test('warns when multiple children are passed as a list', () {
       _renderWithUniqueOwnerName(() => factory({}, [react.span({}), react.span({}), react.span({})]));
 
       expect(consoleErrorCalled, isTrue, reason: 'should have outputted a warning');
-      expect(consoleErrorMessage, contains('Each child in an array or iterator should have a unique "key" prop.'));
     });
 
     test('does not warn when multiple children are passed as variadic args', () {
@@ -236,6 +277,12 @@ void _renderWithUniqueOwnerName(ReactElement render()) {
   _nextFactoryId++;
 
   rtu.renderIntoDocument(factory({'render': render}));
+}
+
+_renderWithOwner(ReactElement render()) {
+  final factory = react.registerComponent(() => new _OwnerHelperComponent()) as ReactDartComponentFactoryProxy;
+
+  return rtu.renderIntoDocument(factory({'render': render}));
 }
 
 class _OwnerHelperComponent extends react.Component {
